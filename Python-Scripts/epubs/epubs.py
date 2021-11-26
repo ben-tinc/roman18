@@ -1,16 +1,48 @@
 '''This Script generate an xml-file from txt-data'''
 
-
 import os.path
 import glob
+import logging
+from pathlib import Path
 import re
 
 #set a path where your data are saved
-path = "D:/Downloads/BNF/*.txt"
+SOURCE_PATH = "../../plain/epubs/"
 #set a path where you want to save your data
-save_path = 'epubs_xmls/'
-if not os.path.exists(save_path):
-    os.makedirs(save_path)
+SAVE_PATH = 'epubs_xmls/'
+
+
+def prepare(save_path):
+    """Ensure that the configured save directory exists."""
+    p = Path(save_path)
+    p.mkdir(parents=True, exist_ok=True)
+    
+    if not any(p.iterdir()):
+        msg = f'SAVE_PATH "{p.absolute()}" is not empty, we might override previous results.'
+        logging.warning(msg)
+    
+    return p
+
+
+def open_file(path):
+    with open(path, encoding='utf-8') as f:
+        text = f.read()
+    return text
+
+
+def clean_up(text):
+    # Delete unnecessary data.
+    text = (
+        text.replace('&', '&amp;')
+            .replace('\!', '')
+            .replace('\*', '*')
+            .replace('* * *', '')
+            .replace('\(', '(')
+            .replace('\)', ')')
+    )
+    # Delete empty lines.
+    text = '\n'.join([line for line in text.split('\n') if line.strip()])
+    return text
 
 
 def edition(path, save_path):
@@ -69,7 +101,13 @@ def edition(path, save_path):
 
 
 def main():
-    edition(path, save_path)
+    prepare(SAVE_PATH)
+
+    for src_file in Path(SOURCE_PATH).iterdir():
+        if src_file.is_file() and src_file.name.endswith('.txt'):
+            text = open_file(src_file)
+            text = clean_up(text)
 
 
-main()
+if __name__ == '__main__':
+    main()
