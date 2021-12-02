@@ -7,13 +7,13 @@ from pathlib import Path
 import re
 
 #set a path where your data are saved
-SOURCE_PATH = "../../plain/epubs/"
+SOURCE_PATH = "sources/"
 #set a path where you want to save your data
 SAVE_PATH = 'epubs_xmls/'
 
 
 def prepare(save_path):
-    """Ensure that the configured save directory exists."""
+    '''Ensure that the configured `SAVE_PATH` exists.'''
     p = Path(save_path)
     p.mkdir(parents=True, exist_ok=True)
     
@@ -31,7 +31,7 @@ def open_file(path):
 
 
 def clean_up(text):
-    # Delete unnecessary data.
+    '''Delete and/or replace unnecessary text artifacts.'''
     text = (
         text.replace('&', '&amp;')
             .replace('\!', '')
@@ -43,6 +43,33 @@ def clean_up(text):
     # Delete empty lines.
     text = '\n'.join([line for line in text.split('\n') if line.strip()])
     return text
+
+
+def _wrap_paragraphs(text):
+    '''Wrap lines in paragraph tags, unless they are headings.'''
+    lines = map(lambda l: f'<p>{l}</p>' if not l.startswith('#') else l, text.split('\n'))
+    return '\n'.join(lines)
+
+def _wrap_headings_and_divs(text):
+    '''Wrap headings in head tags, and wrap them with following lines up to the
+    next heading in a div.
+    '''
+
+
+def transform(text):
+    """Enrich text with TEI markup."""
+    text = _wrap_paragraphs(text)
+    text = _wrap_headings_and_divs(text)
+
+    # Wrap the whole text 
+
+
+def write_results(text, save_path, file_name):
+    """Write results to configured `SAVE_PATH`."""
+    name = file_name.replace('.txt', '.xml')
+    p = Path(save_path) / name
+    with open(p, 'w', encoding='utf-8') as save_location:
+        save_location.write(text)
 
 
 def edition(path, save_path):
@@ -107,6 +134,8 @@ def main():
         if src_file.is_file() and src_file.name.endswith('.txt'):
             text = open_file(src_file)
             text = clean_up(text)
+            text = transform(text)
+            write_results(text, SAVE_PATH, src_file.name)
 
 
 if __name__ == '__main__':
