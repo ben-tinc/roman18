@@ -1,5 +1,6 @@
 '''This Script generate an xml-file from txt-data'''
 
+import xml.etree.ElementTree as ET
 import os.path
 import glob
 import logging
@@ -45,23 +46,82 @@ def clean_up(text):
     return text
 
 
-def _wrap_paragraphs(text):
+def split_titlepage(text):
+    '''Split on the second occurence of "### ".'''
+    # How to recognize the end of the titlepage
+    marker = '\n### '
+    end_of_titlepage = text.find(marker, text.find(marker)+len(marker))
+    # Add 1 to index so that the newline still belongs to the titlepage.
+    titlepage, rest = text[:end_of_titlepage+1], text[end_of_titlepage+1:]
+    return titlepage, rest
+
+
+def wrap_paragraphs(text):
     '''Wrap lines in paragraph tags, unless they are headings.'''
     lines = map(lambda l: f'<p>{l}</p>' if not l.startswith('#') else l, text.split('\n'))
     return '\n'.join(lines)
 
-def _wrap_headings_and_divs(text):
+
+def wrap_headings_and_divs(text):
     '''Wrap headings in head tags, and wrap them with following lines up to the
     next heading in a div.
     '''
+    segments = text.split('\n')
+
+
+def build_titlepage_xml(text):
+    '''Wrap the elements of the titlepage in appropriate XML elements.'''
+    front = ET.Element('front')
+    front.append(ET.Element('div', attrib={'type': 'titlepage'}))
+    # Wrap lines in either head or paragraph tags.
+    for line in text.split('\n'):
+        line = line.strip()
+        if line and line.startswith('#'):
+            h = ET.Element('head')
+            h.text = line.replace('#', '').strip()
+            front.append(h)
+        elif line:
+            p = ET.Element('p')
+            p.text = line.strip()
+            front.append(p)
+    return front
+
+
+def build_body_xml(text):
+    '''Wrap elements of the text body in appropriate XML elements.'''
+    body = ET.Element('body')
+    
+    lines = text.split('\n')
+    div = None
+    for line in lines:
+        if line.startswith('#'):
+            # Start a new div and place a head element inside.
+            div = ET.Element('div', attrib={'type': 'chapter'})
+            head = ET.Element('head')
+            head.text = line.replace('#', '').strip()
+            body.append(div)
+        elif line:
+            # Create a new paragraph either inside an existing div or directly in body.
+            parent = div if div is not None else body
+            p = ET.Element('p')
+            p.text = line.strip()
+            parent.append(p)
+    
+    return body
 
 
 def transform(text):
-    """Enrich text with TEI markup."""
-    text = _wrap_paragraphs(text)
-    text = _wrap_headings_and_divs(text)
+    """Create an XML tree with data extracted from the text."""
+    titlepage, rest = split_titlepage(text)
 
-    # Wrap the whole text 
+    xml = ET.ElementTree()
+    text_node = ET.Element('text')
+
+    front = build_titlepage_xml(titlepage)
+    text_node.append(front)
+
+    text = wrap_paragraphs(text)
+    text = wrap_headings_and_divs(text)
 
 
 def write_results(text, save_path, file_name):
