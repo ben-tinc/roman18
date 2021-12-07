@@ -10,6 +10,10 @@ This script has no external dependencies. It expects the source files in `.txt` 
 
 ## Usage
 
+```bash
+python epubs.py
+```
+
 
 ## Tests
 
