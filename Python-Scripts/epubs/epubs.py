@@ -1,4 +1,4 @@
-'''This Script generate an xml-file from txt-data'''
+'''This Script generates an xml-file from txt-data.'''
 
 import xml.etree.ElementTree as ET
 import os.path
@@ -10,7 +10,7 @@ import re
 #set a path where your data are saved
 SOURCE_PATH = "sources/"
 #set a path where you want to save your data
-SAVE_PATH = 'epubs_xmls/'
+SAVE_PATH = 'results/'
 
 
 def prepare(save_path):
@@ -18,7 +18,7 @@ def prepare(save_path):
     p = Path(save_path)
     p.mkdir(parents=True, exist_ok=True)
     
-    if not any(p.iterdir()):
+    if any(p.iterdir()):
         msg = f'SAVE_PATH "{p.absolute()}" is not empty, we might override previous results.'
         logging.warning(msg)
     
@@ -56,34 +56,30 @@ def split_titlepage(text):
     return titlepage, rest
 
 
-def wrap_paragraphs(text):
-    '''Wrap lines in paragraph tags, unless they are headings.'''
-    lines = map(lambda l: f'<p>{l}</p>' if not l.startswith('#') else l, text.split('\n'))
-    return '\n'.join(lines)
-
-
-def wrap_headings_and_divs(text):
-    '''Wrap headings in head tags, and wrap them with following lines up to the
-    next heading in a div.
+def split_chapters(text):
+    '''Split on occurrences of "### ". This is relevant because footnotes are
+    numbered by chapter.
     '''
-    segments = text.split('\n')
+    pass
 
 
 def build_titlepage_xml(text):
     '''Wrap the elements of the titlepage in appropriate XML elements.'''
     front = ET.Element('front')
-    front.append(ET.Element('div', attrib={'type': 'titlepage'}))
+    titlepage = ET.Element('div', attrib={'type': 'titlepage'})
+    
     # Wrap lines in either head or paragraph tags.
     for line in text.split('\n'):
         line = line.strip()
         if line and line.startswith('#'):
             h = ET.Element('head')
             h.text = line.replace('#', '').strip()
-            front.append(h)
+            titlepage.append(h)
         elif line:
             p = ET.Element('p')
             p.text = line.strip()
-            front.append(p)
+            titlepage.append(p)
+    front.append(titlepage)
     return front
 
 
@@ -91,45 +87,108 @@ def build_body_xml(text):
     '''Wrap elements of the text body in appropriate XML elements.'''
     body = ET.Element('body')
     
-    lines = text.split('\n')
+    # If we are currently inside a div, keep track of it.
     div = None
-    for line in lines:
+    # Collect all the footnotes along the way.
+    notes = {}
+
+    for line in text.split('\n'):
         if line.startswith('#'):
             # Start a new div and place a head element inside.
             div = ET.Element('div', attrib={'type': 'chapter'})
-            head = ET.Element('head')
+            head = ET.SubElement(div, 'head')
             head.text = line.replace('#', '').strip()
             body.append(div)
+        elif re.match('\d+\. ↑', line):
+
         elif line:
             # Create a new paragraph either inside an existing div or directly in body.
             parent = div if div is not None else body
             p = ET.Element('p')
             p.text = line.strip()
+
+            p = parse_italics(p)
+            
             parent.append(p)
     
     return body
+
+
+def parse_footnotes(body):
+    pattern = r''
+    notes = {}
+
+    for node in body.iter():
+
+
+    return body, notes
+
+
+
+def parse_italics(paragraph):
+    '''Create a paragraph with markup for italics if applicable.'''
+    # Non-greedy pattern (i.e. match as little as possible) for italic text segments.
+    italic = r'(\*.*?\*)'
+    segments = re.split(italic, paragraph.text)
+
+    # Check if there are actually italic segments.
+    if len(segments) > 1:
+        # Process italics:
+        last_node = paragraph
+        i = 0
+        while i < len(segments):
+            seg = segments[i]
+            # Case 1: non-italic at the start of the paragraph. This should be
+            #         in the `text` part of the paragraph.
+            if not seg.startswith('*') and i == 0:
+                paragraph.text = seg
+            # Case 2: non-italic somewhere in the middle of the paragraph. This is
+            #         supposed to be the `tail` of a previously created <hi> node.
+            elif not seg.startswith('*'):
+                last_node.tail = seg
+            # Case 3: italic text. Create a new <hi> node and set its text content.
+            #         Then append it to the paragraph.
+            elif seg.startswith('*'):
+                content = seg.strip('*')
+                new_node = ET.Element('hi', attrib={'rend': 'italic'})
+                new_node.text = content
+                last_node = new_node
+                paragraph.append(new_node)
+            i += 1
+    
+    return paragraph
 
 
 def transform(text):
     """Create an XML tree with data extracted from the text."""
     titlepage, rest = split_titlepage(text)
 
-    xml = ET.ElementTree()
+    # Create root node.
     text_node = ET.Element('text')
+    xml = ET.ElementTree(text_node)
 
+    # Create front segment.
     front = build_titlepage_xml(titlepage)
     text_node.append(front)
 
-    text = wrap_paragraphs(text)
-    text = wrap_headings_and_divs(text)
+    # Create text body segment.
+    body = build_body_xml(rest)
+    text_node.append(body)
+
+    return xml
 
 
-def write_results(text, save_path, file_name):
+def write_results(xml, save_path, file_name):
     """Write results to configured `SAVE_PATH`."""
     name = file_name.replace('.txt', '.xml')
     p = Path(save_path) / name
-    with open(p, 'w', encoding='utf-8') as save_location:
-        save_location.write(text)
+    p = str(p.absolute())
+    
+    logging.debug(f'writing results to {p}.')
+    
+    # Pretty-print the xml.
+    ET.indent(xml)
+    xml.write(p, encoding='utf-8')
 
 
 def edition(path, save_path):
@@ -188,14 +247,17 @@ def edition(path, save_path):
 
 
 def main():
+    logging.basicConfig(level=logging.WARNING)
+
     prepare(SAVE_PATH)
 
     for src_file in Path(SOURCE_PATH).iterdir():
         if src_file.is_file() and src_file.name.endswith('.txt'):
+            logging.debug(f'Processing {src_file}')
             text = open_file(src_file)
             text = clean_up(text)
-            text = transform(text)
-            write_results(text, SAVE_PATH, src_file.name)
+            xml = transform(text)
+            write_results(xml, SAVE_PATH, src_file.name)
 
 
 if __name__ == '__main__':
