@@ -46,23 +46,6 @@ def clean_up(text):
     return text
 
 
-def split_titlepage(text):
-    '''Split on the second occurence of "### ".'''
-    # How to recognize the end of the titlepage
-    marker = '\n### '
-    end_of_titlepage = text.find(marker, text.find(marker)+len(marker))
-    # Add 1 to index so that the newline still belongs to the titlepage.
-    titlepage, rest = text[:end_of_titlepage+1], text[end_of_titlepage+1:]
-    return titlepage, rest
-
-
-def split_chapters(text):
-    '''Split on occurrences of "### ". This is relevant because footnotes are
-    numbered by chapter.
-    '''
-    pass
-
-
 def build_titlepage_xml(text):
     '''Wrap the elements of the titlepage in appropriate XML elements.'''
     front = ET.Element('front')
@@ -99,8 +82,6 @@ def build_body_xml(text):
             head = ET.SubElement(div, 'head')
             head.text = line.replace('#', '').strip()
             body.append(div)
-        elif re.match('\d+\. ↑', line):
-
         elif line:
             # Create a new paragraph either inside an existing div or directly in body.
             parent = div if div is not None else body
@@ -114,18 +95,52 @@ def build_body_xml(text):
     return body
 
 
-def parse_footnotes(body):
-    pattern = r''
-    notes = {}
+def build_chapter_xml(chapters):
+    '''Given a list of strings, create the appropriate XML markup.
+    '''
+    footnotes = {}
 
-    for node in body.iter():
+    for chapter in chapters:
+        text, notes = parse_footnotes(chapter)
+        footnotes.update(notes)
 
 
-    return body, notes
+def insert_fn_markers_xml(paragraph):
+    '''Update paragraph with <ref> nodes for the footnote markers.
+    
+    This relies on the numerical markers being correct, i.e. if footnotes are
+    numbered for each chapter individually, they should have been corrected
+    with `parse_footnotes()` beforehand.
+    '''
+    mark_pattern = r'\\\[(\d+)\\\]'
+    segments = re.split(mark_pattern, paragraph.text)
+
+    # Check if there are actually footnote markers in this paragraph.
+    if len(segments) > 1:
+        last_node = paragraph
+        i = 0
+        while i < len(segments):
+            segment = segments[i]
+            # Text at the start of the paragraph. This is stored in the `text` property
+            # of the paragraph node itself.
+            if not segment.isnumeric() and i == 0:
+                paragraph.text = segment
+            # Marker segment. This is stored as a `ref` child node without `text`. 
+            # Further text will be appended to the `tail` property of this node.
+            elif segment.isnumeric():
+                number = f'#N{segment}'
+                fn_node = ET.SubElement(paragraph, 'ref', attrib={'target': number})
+                last_node = fn_node
+            # Regular text content after at least one `ref` has been created.
+            # Store it as the `tail` property of the latest `ref` node.
+            else:
+                last_node.tail = segment
+            i += 1
+
+    return paragraph
 
 
-
-def parse_italics(paragraph):
+def insert_italics_xml(paragraph):
     '''Create a paragraph with markup for italics if applicable.'''
     # Non-greedy pattern (i.e. match as little as possible) for italic text segments.
     italic = r'(\*.*?\*)'
@@ -157,6 +172,57 @@ def parse_italics(paragraph):
             i += 1
     
     return paragraph
+
+
+def parse_footnotes(text, fn_offset=0):
+    '''Given a string, identify footnotes and replace their markers
+    according to `fn_offset`.
+    '''
+    mark_pattern = r'\\\[(\d+)\\\]'
+    markers = re.findall(mark_pattern, text)
+    notes = [re.search(f'\n{n}\.\s↑\s(.*?)\s*\n', text).group(1) for n in markers]
+
+    # Replace markers with updated numbering based of offset of this chapter.
+    text = re.sub(mark_pattern, lambda match: str(int(match.group(1))+fn_offset), text)
+    # Delete actual notes at the end of the chapter. They will eventually be inserted
+    # in the <back> of the document.
+    text = re.sub(r'\n\d+?\.\s↑\s(.*?)\s*\n', '', text)
+
+    # Map updated markers to corresponding footnote text.
+    footnotes = {int(m)+fn_offset: n for m, n in zip(markers, notes)}
+
+    return text, footnotes
+
+
+def split_titlepage(text):
+    '''Split on the second occurence of "### ".'''
+    # How to recognize the end of the titlepage
+    marker = '\n### '
+    end_of_titlepage = text.find(marker, text.find(marker)+len(marker))
+    # Add 1 to index so that the newline still belongs to the titlepage.
+    titlepage, rest = text[:end_of_titlepage+1], text[end_of_titlepage+1:]
+    return titlepage, rest
+
+
+def split_chapters(text):
+    '''Split on occurrences of "### ". This is relevant because footnotes are
+    internally numbered by chapter.
+    '''
+    pattern = r'\n(###\s.+?)\s*\n'
+    segments = re.split(pattern, text)
+
+    if len(segments) == 1:
+        # No chapters
+        chapters = [text]
+    elif segments[0].startswith('### '):
+        # Start with chapter heading
+        chapters = [h + t for h, t in zip(segments[0::2], segments[1::2])]
+    else:
+        # Start chapter without heading
+        chapters = [segments[0]]
+        chapters.extend([h + t for h, t in zip(segments[1::2], segments[2::2])])
+
+    return chapters
 
 
 def transform(text):
