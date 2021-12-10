@@ -1,8 +1,11 @@
-'''This Script generates an xml-file from txt-data.'''
+'''
+This Script generates an xml-file from txt-data.
+'''
 
 import xml.etree.ElementTree as ET
 import os.path
 import glob
+from itertools import takewhile
 import logging
 from pathlib import Path
 import re
@@ -42,7 +45,11 @@ def clean_up(text):
             .replace('\)', ')')
     )
     # Delete empty lines.
-    text = '\n'.join([line for line in text.split('\n') if line.strip()])
+    lines = [line for line in text.split('\n') if line.strip()]
+    # Delete all lines after '# ****À propos de cette édition électronique'
+    lines = takewhile(lambda l: not l.startswith('# ****À propos de cette édition électronique'), lines)
+
+    text = '\n'.join(lines)
     return text
 
 
@@ -68,41 +75,43 @@ def build_titlepage_xml(text):
 
 def build_body_xml(text):
     '''Wrap elements of the text body in appropriate XML elements.'''
+    chapters = split_chapters(text)
     body = ET.Element('body')
-    
+    footnotes = {}
+
+    for chapter in chapters:
+        markup, footnotes = build_chapter_xml(chapter, footnotes)
+
     # If we are currently inside a div, keep track of it.
     div = None
     # Collect all the footnotes along the way.
     notes = {}
-
-    for line in text.split('\n'):
-        if line.startswith('#'):
-            # Start a new div and place a head element inside.
-            div = ET.Element('div', attrib={'type': 'chapter'})
-            head = ET.SubElement(div, 'head')
-            head.text = line.replace('#', '').strip()
-            body.append(div)
-        elif line:
-            # Create a new paragraph either inside an existing div or directly in body.
-            parent = div if div is not None else body
-            p = ET.Element('p')
-            p.text = line.strip()
-
-            p = parse_italics(p)
-            
-            parent.append(p)
-    
+  
     return body
 
 
-def build_chapter_xml(chapters):
-    '''Given a list of strings, create the appropriate XML markup.
-    '''
-    footnotes = {}
+def build_chapter_xml(chapter, footnotes):
+    '''Given the text of one chapter, create the appropriate XML markup.'''
+    
+    offset = max(footnotes.keys()) or 0
+    text, notes = parse_footnotes(chapter, offset)
+    footnotes.update(notes)
 
-    for chapter in chapters:
-        text, notes = parse_footnotes(chapter)
-        footnotes.update(notes)
+    markup = ET.Element('div', attrib={'type': 'chapter'})
+    
+    for line in text.split('\n'):
+        if line.startswith('#'):            
+            node = ET.SubElement(markup, 'head')
+            node.text = line.replace('#', '').strip()
+        elif line:
+            node = ET.SubElement(markup, 'p')
+            node.text = line.strip()
+        
+        # Insert additional markup inside the new node.
+        node = insert_fn_markers_xml(node)
+        node = insert_italics_xml(node)
+
+    return markup, footnotes
 
 
 def insert_fn_markers_xml(paragraph):
@@ -175,18 +184,25 @@ def insert_italics_xml(paragraph):
 
 
 def parse_footnotes(text, fn_offset=0):
-    '''Given a string, identify footnotes and replace their markers
-    according to `fn_offset`.
+    '''Given a string, identify footnotes and replace their markers.
+    
+    Sometimes, footnotes in a document are numbered per chapter. In the final
+    TEI, we put all the footnotes in a designated <back> section. So we need to
+    renumber them first. The parameter `fn_offset` gives the number of footnotes
+    we have already seen in previous chapters.
     '''
-    mark_pattern = r'\\\[(\d+)\\\]'
-    markers = re.findall(mark_pattern, text)
-    notes = [re.search(f'\n{n}\.\s↑\s(.*?)\s*\n', text).group(1) for n in markers]
+    mark_pattern = r'(\\\[)(\d+)(\\\])'
+    markers = [m[1] for m in re.findall(mark_pattern, text)]
+    notes = [re.search(f'\n{n}\.\s↑\s+(.*?)\s*\n', text).group(1) for n in markers]
 
     # Replace markers with updated numbering based of offset of this chapter.
-    text = re.sub(mark_pattern, lambda match: str(int(match.group(1))+fn_offset), text)
+    text = re.sub(
+        mark_pattern,
+        lambda match: f'{match.group(1)}{(int(match.group(2))+fn_offset)}{match.group(3)}',
+        text)
     # Delete actual notes at the end of the chapter. They will eventually be inserted
     # in the <back> of the document.
-    text = re.sub(r'\n\d+?\.\s↑\s(.*?)\s*\n', '', text)
+    text = re.sub(r'\d+?\.\s↑\s+(.*?)\s*?\n', '', text)
 
     # Map updated markers to corresponding footnote text.
     footnotes = {int(m)+fn_offset: n for m, n in zip(markers, notes)}
@@ -205,22 +221,24 @@ def split_titlepage(text):
 
 
 def split_chapters(text):
-    '''Split on occurrences of "### ". This is relevant because footnotes are
-    internally numbered by chapter.
+    '''Split on occurrences of "### ".
+    
+    The main reason why we want to process chapters individually is because footnotes
+    are internally numbered per chapter.
     '''
-    pattern = r'\n(###\s.+?)\s*\n'
-    segments = re.split(pattern, text)
+    pattern = r'(###\s.+?)\s*\n'
+    segments = [s for s in re.split(pattern, text) if s]
 
+    # No chapters:
     if len(segments) == 1:
-        # No chapters
         chapters = [text]
+    # Segments start with chapter heading:
     elif segments[0].startswith('### '):
-        # Start with chapter heading
-        chapters = [h + t for h, t in zip(segments[0::2], segments[1::2])]
+        chapters = [f'{h}\n{t}' for h, t in zip(segments[0::2], segments[1::2])]
+    # Segments start with chapter without heading:
     else:
-        # Start chapter without heading
         chapters = [segments[0]]
-        chapters.extend([h + t for h, t in zip(segments[1::2], segments[2::2])])
+        chapters.extend([f'{h}\n{t}' for h, t in zip(segments[1::2], segments[2::2])])
 
     return chapters
 
@@ -327,4 +345,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    text = 'Text \[1\] text \[2\] text.\n\n1. ↑ http://fr.wikisource.org\n2. ↑  http://fr.wikisource.org\n'
+    res_text, res_fns = parse_footnotes(text)
+    #main()
