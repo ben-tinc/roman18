@@ -5,9 +5,12 @@ have been generated from epub editions, into TEI XML.
 
 from unittest import TestCase
 
+import lxml.etree as ET
+
 from epubs import clean_up
 from epubs import split_chapters, split_titlepage
 from epubs import parse_footnotes
+from epubs import insert_fn_markers_xml, insert_italics_xml
 
 
 class EpubCleanupTest(TestCase):
@@ -115,4 +118,28 @@ class EpubFootnoteParsing(TestCase):
 
 class EpubTransformTest(TestCase):
     '''Test cases for the XML generation.'''
+
+    def test_insert_footnotes(self):
+        '''Test `insert_fn_markers_xml()`
+        
+        It is important that this function works not only on the text of a single
+        node, but also on subnotes. Otherwise, the correctness of the output would
+        depend on the order of execution.
+        '''
+
+    def test_insert_italics(self):
+        '''Test `insert_italics_xml()`
+        
+        It is important that this function works not only on the text of a single
+        node, but also on subnotes. Otherwise, the correctness of the output would
+        depend on the order of execution.
+        '''
+        xml = '''
+<div>
+<p>Hello *from* the other side.</p>
+<p>Hello <ref /> *again*.</p>
+</div>
+'''
+        tree = ET.fromstring(xml)
+
     

@@ -2,13 +2,15 @@
 This Script generates an xml-file from txt-data.
 '''
 
-import xml.etree.ElementTree as ET
 import os.path
 import glob
 from itertools import takewhile
 import logging
 from pathlib import Path
 import re
+
+import lxml.etree as ET
+
 
 #set a path where your data are saved
 SOURCE_PATH = "sources/"
@@ -149,23 +151,24 @@ def insert_fn_markers_xml(paragraph):
     return paragraph
 
 
-def insert_italics_xml(paragraph):
-    '''Create a paragraph with markup for italics if applicable.'''
+def insert_italics_xml(node):
+    '''Given a paragraph node, insert a hi node for italics if applicable.'''
     # Non-greedy pattern (i.e. match as little as possible) for italic text segments.
     italic = r'(\*.*?\*)'
-    segments = re.split(italic, paragraph.text)
+    segments = re.split(italic, node.text)
+    tail_segments = re.split(italic, node.tail)
 
-    # Check if there are actually italic segments.
+    # Check if there are actually italic segments in the node's text.
     if len(segments) > 1:
         # Process italics:
-        last_node = paragraph
+        last_node = node
         i = 0
         while i < len(segments):
             seg = segments[i]
             # Case 1: non-italic at the start of the paragraph. This should be
             #         in the `text` part of the paragraph.
             if not seg.startswith('*') and i == 0:
-                paragraph.text = seg
+                node.text = seg
             # Case 2: non-italic somewhere in the middle of the paragraph. This is
             #         supposed to be the `tail` of a previously created <hi> node.
             elif not seg.startswith('*'):
@@ -174,13 +177,42 @@ def insert_italics_xml(paragraph):
             #         Then append it to the paragraph.
             elif seg.startswith('*'):
                 content = seg.strip('*')
-                new_node = ET.Element('hi', attrib={'rend': 'italic'})
+                new_node = ET.SubElement(node, 'hi', attrib={'rend': 'italic'})
                 new_node.text = content
                 last_node = new_node
-                paragraph.append(new_node)
             i += 1
     
-    return paragraph
+    # Check if there are italic segments in the node's tail.
+    if len(tail_segments) > 1:
+        last_node = node
+        i = 0
+        while i < len(tail_segments):
+            seg = tail_segments[i]
+            # Case 1: non-italic at the start of the tail. This should remain
+            #         in the `tail` of this node (while all the following text
+            #         shouldn't).
+            if not seg.startswith('*') and i == 0:
+                node.text = seg
+            # Case 2: non-italic somewhere in the middle or at the end of the
+            #         tail. This should be in the `tail` of a previously created
+            #         <hi> node.
+            elif not seg.startswith('*'):
+                last_node.tail = seg
+            # Case 3: italic text. Create a new <hi> node and set its text content.
+            #         Append it to the parent (!) of the current node.
+            elif seg.startswith('*'):
+                content = seg.strip('*')
+                parent = last_node.getparent()
+                new_node = ET.SubElement(parent, 'hi', attrib={'rend': 'italic'})
+                new_node.text = content
+                last_node = new_node
+            i += 1
+    
+    # Do the same for all child nodes of the current node.
+    for child in node.getchildren():
+        insert_italics_xml(child)
+
+    return node
 
 
 def parse_footnotes(text, fn_offset=0):
@@ -223,7 +255,7 @@ def split_titlepage(text):
 def split_chapters(text):
     '''Split on occurrences of "### ".
     
-    The main reason why we want to process chapters individually is because footnotes
+    The main reason why we want to process chapters individually is that often footnotes
     are internally numbered per chapter.
     '''
     pattern = r'(###\s.+?)\s*\n'
