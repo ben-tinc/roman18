@@ -116,16 +116,19 @@ class EpubFootnoteParsing(TestCase):
         self.assertEqual(exp_fns, res_fns)
 
 
-class EpubTransformTest(TestCase):
-    '''Test cases for the XML generation.'''
+class EpubItalicsTest(TestCase):
+    '''Test cases for the XML generation of <hi> nodes.'''
 
-    def test_insert_footnotes(self):
-        '''Test `insert_fn_markers_xml()`
-        
-        It is important that this function works not only on the text of a single
-        node, but also on subnotes. Otherwise, the correctness of the output would
-        depend on the order of execution.
-        '''
+    def test_insert_simple_italics(self):
+        '''Test `insert_italics_xml() with unnested node.'''
+        xml = '<p>Hello *from* the other side.</p>'
+        root = ET.fromstring(xml)
+        paragraph = insert_italics_xml(root)
+        highlight = paragraph.find('hi')
+        self.assertEqual(paragraph.text, 'Hello ')
+        self.assertEqual(highlight.text, 'from')
+        self.assertEqual(highlight.tail, ' the other side.')
+
 
     def test_insert_italics(self):
         '''Test `insert_italics_xml()`
@@ -137,9 +140,43 @@ class EpubTransformTest(TestCase):
         xml = '''
 <div>
 <p>Hello *from* the other side.</p>
-<p>Hello <ref /> *again*.</p>
+<p>Hello <ref/> *again*.</p>
 </div>
 '''
-        tree = ET.fromstring(xml)
+        root = ET.fromstring(xml)
+        div = insert_italics_xml(root)
+        fst_p, snd_p = div.findall('p')
+        ref = snd_p.find('ref')
+        fst_hi = fst_p.find('hi')
+        snd_hi = snd_p.find('hi')
 
-    
+        self.assertEqual(fst_p.text, 'Hello ')
+        self.assertEqual(fst_hi.text, 'from')
+        self.assertEqual(fst_hi.tail, ' the other side.')
+        self.assertEqual(snd_p.text, 'Hello ')
+        self.assertEqual(ref.text, None)
+        self.assertEqual(ref.tail, ' ')
+        self.assertEqual(snd_hi.text, 'again')
+        self.assertEqual(snd_hi.tail, '.')
+
+
+class EpubFootnotesTest(TestCase):
+    '''Test cases for the XML generation of <ref> nodes.'''
+
+    def test_insert_simple_fn_marker(self):
+        '''Test `insert_fn_markers_xml()` with simple, unnested node.'''
+        xml = "<p>L'Ingénu débarque en pot de chambre\[1\] dans la cour des cuisines.</p>"
+        root = ET.fromstring(xml)
+        paragraph = insert_fn_markers_xml(root)
+        footnote = paragraph.find('ref')
+        self.assertEqual(paragraph.text, "L'Ingénu débarque en pot de chambre")
+        self.assertEqual(footnote.get('target'), '#N1')
+        self.assertEqual(footnote.tail, " dans la cour des cuisines.")
+
+    def test_insert_footnotes(self):
+        '''Test `insert_fn_markers_xml()`
+        
+        It is important that this function works not only on the text of a single
+        node, but also on subnotes. Otherwise, the correctness of the output would
+        depend on the order of execution.
+        '''

@@ -117,7 +117,7 @@ def build_chapter_xml(chapter, footnotes):
     return markup, footnotes
 
 
-def insert_fn_markers_xml(paragraph):
+def insert_fn_markers_xml(node):
     '''Update paragraph with <ref> nodes for the footnote markers.
     
     This relies on the numerical markers being correct, i.e. if footnotes are
@@ -125,39 +125,66 @@ def insert_fn_markers_xml(paragraph):
     with `parse_footnotes()` beforehand.
     '''
     mark_pattern = r'\\\[(\d+)\\\]'
-    segments = re.split(mark_pattern, paragraph.text)
+    segments = re.split(mark_pattern, node.text or '')
+    tail_segments = re.split(mark_pattern, node.tail or '')
 
-    # Check if there are actually footnote markers in this paragraph.
+    # Check if there are actually footnote markers in this node's text.
     if len(segments) > 1:
-        last_node = paragraph
+        last_node = node
         i = 0
         while i < len(segments):
             segment = segments[i]
-            # Text at the start of the paragraph. This is stored in the `text` property
-            # of the paragraph node itself.
+            # Case 1: Text at the start of the node. This is stored in the `text` property
+            #         of the node itself.
             if not segment.isnumeric() and i == 0:
-                paragraph.text = segment
-            # Marker segment. This is stored as a `ref` child node without `text`. 
-            # Further text will be appended to the `tail` property of this node.
+                node.text = segment
+            # Case 2: Regular text after at least one `ref` has been created.
+            #         This should be the `tail` of the previously created `ref` node.
+            elif not segment.isnumeric():
+                last_node.tail = segment
+            # Case 3: Marker segment. This is stored as a `ref` child node without `text`. 
+            #         Further text will be appended to the `tail` property of this node.
             elif segment.isnumeric():
                 number = f'#N{segment}'
-                fn_node = ET.SubElement(paragraph, 'ref', attrib={'target': number})
+                fn_node = ET.SubElement(node, 'ref', attrib={'target': number})
                 last_node = fn_node
-            # Regular text content after at least one `ref` has been created.
-            # Store it as the `tail` property of the latest `ref` node.
-            else:
-                last_node.tail = segment
             i += 1
 
-    return paragraph
+    # Check if there are footnote markers in this node's tail.
+    if len(tail_segments) > 1:
+        last_node = node
+        i = 0
+        while i < len(tail_segments):
+            segment = segments[i]
+            # Case 1: Normal text at the start of the tail. This should remain tail.
+            if not segment.isnumeric() and i == 0:
+                node.tail = segment
+            # Case 2: Normal text somewhere in the middle or at the end of tail.
+            #         This should be the tail of a previously created node.
+            elif not segment.isnumeric():
+                last_node.tail = segment
+            # Case 3: Footnote marker. Create a new sub node of the parent (!)
+            #         of the current node.
+            elif segment.isnumeric():
+                number = f'#N{segment}'
+                parent = last_node.getparent()
+                fn_node = ET.SubElement(parent, 'ref', attrib={'target': number})
+                last_node = fn_node
+            i += 1
+
+    # Do the same for all child nodes of the current node.
+    for child in node.getchildren():
+        insert_fn_markers_xml(child)
+
+    return node
 
 
 def insert_italics_xml(node):
     '''Given a paragraph node, insert a hi node for italics if applicable.'''
     # Non-greedy pattern (i.e. match as little as possible) for italic text segments.
     italic = r'(\*.*?\*)'
-    segments = re.split(italic, node.text)
-    tail_segments = re.split(italic, node.tail)
+    segments = re.split(italic, node.text or '')
+    tail_segments = re.split(italic, node.tail or '')
 
     # Check if there are actually italic segments in the node's text.
     if len(segments) > 1:
@@ -193,7 +220,7 @@ def insert_italics_xml(node):
             #         in the `tail` of this node (while all the following text
             #         shouldn't).
             if not seg.startswith('*') and i == 0:
-                node.text = seg
+                node.tail = seg
             # Case 2: non-italic somewhere in the middle or at the end of the
             #         tail. This should be in the `tail` of a previously created
             #         <hi> node.
@@ -378,6 +405,16 @@ def main():
 
 
 if __name__ == '__main__':
-    text = 'Text \[1\] text \[2\] text.\n\n1. ↑ http://fr.wikisource.org\n2. ↑  http://fr.wikisource.org\n'
-    res_text, res_fns = parse_footnotes(text)
+    #text = 'Text \[1\] text \[2\] text.\n\n1. ↑ http://fr.wikisource.org\n2. ↑  http://fr.wikisource.org\n'
+    #res_text, res_fns = parse_footnotes(text)
+
+    xml = '''
+<div>
+<p>Hello *from* the other side.</p>
+<p>Hello <ref/> *again*.</p>
+</div>
+'''
+    root = ET.fromstring(xml)
+    div = insert_italics_xml(root)
+    print('hello')
     #main()
